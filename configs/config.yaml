@@ -1,0 +1,33 @@
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  log_level: "info"
+  cors_origins: ["*"]
+  max_file_size_mb: 500
+
+models:
+  clip_model_name: "ViT-B/32"
+  clip_device: "cpu"
+  tensorrt_precision: "fp16"
+  tensorrt_model_path: "/models/encoder.engine"
+  embedding_dim: 512
+
+storage:
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+  qdrant_collection: "video_embeddings"
+  qdrant_api_key: null
+  cache_ttl_seconds: 3600
+
+ingestion:
+  kafka_bootstrap_servers: "localhost:9092"
+  kafka_topic_ingest: "video.ingest"
+  kafka_topic_embed: "video.embed"
+  scene_threshold: 0.3
+  min_scene_duration_seconds: 2.0
+  frame_sample_rate: 1.0
+
+data:
+  videos_dir: "data/videos"
+  frames_dir: "data/frames"
