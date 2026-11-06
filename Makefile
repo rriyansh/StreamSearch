@@ -1,30 +1,46 @@
-.PHONY: setup install lint test format docker-up docker-down
+.PHONY: help install up down logs build test lint format clean ingest
 
-PYTHON ?= python3
-PIP ?= pip
-
-setup: install
-	@$(PYTHON) scripts/setup.sh
+help:
+	@echo "StreamSearch Makefile"
+	@echo "  make install    - install python deps"
+	@echo "  make up         - start all services"
+	@echo "  make down       - stop all services"
+	@echo "  make logs       - follow logs"
+	@echo "  make build      - rebuild docker images"
+	@echo "  make test       - run tests"
+	@echo "  make lint       - run linters"
+	@echo "  make format     - format code"
+	@echo "  make clean      - remove containers and volumes"
+	@echo "  make ingest VIDEO=path - ingest a video file"
 
 install:
-	$(PIP) install -r requirements.txt
+	pip install -r requirements.txt -r requirements-dev.txt
 
-install-dev:
-	$(PIP) install -r requirements.txt -r requirements-dev.txt
+up:
+	docker compose up -d
 
-lint:
-	ruff check src/ ui/ worker/ scripts/ tests/
-	black --check src/ ui/ worker/ scripts/ tests/
+down:
+	docker compose down
 
-format:
-	ruff format src/ ui/ worker/ scripts/ tests/
-	black src/ ui/ worker/ scripts/ tests/
+logs:
+	docker compose logs -f
+
+build:
+	docker compose build --no-cache
 
 test:
-	pytest
+	pytest tests/ -v
 
-docker-up:
-	docker-compose up --build
+lint:
+	ruff check src/ ui/ worker/ tests/
+	mypy src/
 
-docker-down:
-	docker-compose down
+format:
+	ruff format src/ ui/ worker/ tests/
+	ruff check --fix src/ ui/ worker/ tests/
+
+clean:
+	docker compose down -v --remove-orphans
+
+ingest:
+	python scripts/ingest_video.py $(VIDEO)
