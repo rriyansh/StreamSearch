@@ -1,22 +1,23 @@
-FROM python:3.11-slim
-
-WORKDIR /app
+FROM python:3.10-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CLIP_DEVICE=cpu
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    git build-essential libglib2.0-0 libgl1 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-COPY src ./src
-COPY scripts ./scripts
-COPY configs ./configs
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-CMD ["python", "-m", "src.streamsearch.ingestion.pipeline"]
+COPY pyproject.toml /app/pyproject.toml
+COPY src /app/src
+COPY worker /app/worker
+RUN pip install -e .
+
+COPY configs /app/configs
+
+CMD ["python", "-m", "worker"]
