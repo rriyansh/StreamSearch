@@ -1,78 +1,115 @@
-"""TensorRT-accelerated CLIP encoder (optional GPU acceleration)."""
-
-from __future__ import annotations
+"""TensorRT-accelerated encoder. Falls back to CLIPEncoder when TRT is unavailable."""
 
 from pathlib import Path
 from typing import List
 
 import numpy as np
+from PIL import Image
 
-from src.streamsearch.models.base import BaseEncoder
+from ..logging_config import get_logger
+from .base import BaseEncoder
+from .clip_encoder import CLIPEncoder
+
+logger = get_logger(__name__)
 
 
 class TensorRTEncoder(BaseEncoder):
-    """Encode images using a TensorRT engine (falls back to CPU on error)."""
+    """
+    Wraps a TensorRT engine that exposes `encode_image` and `encode_text`.
 
-    def __init__(
-        self,
-        engine_path: str | Path | None = None,
-        embedding_dim: int = 512,
-        precision: str = "fp16",
-    ) -> None:
-        self.engine_path = Path(engine_path) if engine_path else None
-        self.precision = precision
-        self._embedding_dim = embedding_dim
-        self.engine = None
-        self.context = None
-        self._load_engine()
+    The engine must be built by `scripts/export_tensorrt.py`. If the engine
+    file is missing or TensorRT isn't installed, this class transparently
+    falls back to `CLIPEncoder`.
+    """
 
-    def _load_engine(self) -> None:
+    def __init__(self, engine_path: str, model_name: str = "ViT-B/32", device: str = "auto") -> None:
+        self._fallback: CLIPEncoder | None = None
+        self._session = None
+
         try:
-            import tensorrt as trt  # type: ignore
+            import pycuda.driver as cuda  # noqa: F401
             import pycuda.autoinit  # noqa: F401
-            import pycuda.driver as cuda  # type: ignore
+            import tensorrt as trt  # noqa: F401
 
-            if self.engine_path and self.engine_path.exists():
-                logger = trt.Logger(trt.Logger.WARNING)
-                with open(self.engine_path, "rb") as fh, trt.Runtime(logger) as runtime:
-                    self.engine = runtime.deserialize_cuda_engine(fh.read())
-                self.context = self.engine.create_execution_context()
-        except Exception:
-            self.engine = None
-            self.context = None
+            path = Path(engine_path)
+            if not path.exists():
+                raise FileNotFoundError(f"TensorRT engine not found: {engine_path}")
 
-    def encode(self, image: np.ndarray) -> np.ndarray:
-        return self.encode_batch([image])[0]
+            import tensorrt as trt
 
-    def encode_batch(self, images: List[np.ndarray]) -> np.ndarray:
-        if self.context is not None:
-            batch = np.stack(images).astype(np.float32)
-            output = np.empty((batch.shape[0], self._embedding_dim), dtype=np.float32)
-            self.context.execute_v2([batch, output])
-            return output
-        return np.random.randn(len(images), self._embedding_dim).astype(np.float32)
+            trt_logger = trt.Logger(trt.Logger.WARNING)
+            runtime = trt.Runtime(trt_logger)
+            with path.open("rb") as f:
+                engine = runtime.deserialize_cuda_engine(f.read())
+            if engine is None:
+                raise RuntimeError("Failed to deserialize TensorRT engine")
+            self._engine = engine
+            self._context = engine.create_execution_context()
+            self._vector_size = int(engine.get_tensor_shape("output")[1])
+            self._engine_path = str(path)
+            logger.info("TensorRT encoder loaded: %s", engine_path)
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.warning("TensorRT unavailable (%s). Falling back to CLIPEncoder.", exc)
+            self._fallback = CLIPEncoder(model_name=model_name, device=device)
+            self._vector_size = self._fallback.vector_size
 
     @property
-    def embedding_dim(self) -> int:
-        return self._embedding_dim
+    def vector_size(self) -> int:
+        return self._vector_size
 
+    def _infer(self, tensor: np.ndarray) -> np.ndarray:  # pragma: no cover (needs TRT)
+        import pycuda.driver as cuda
+        import tensorrt as trt
 
-def export_tensorrt(model_name: str, output: Path, precision: str = "fp16") -> None:
-    """Export a CLIP vision encoder to a TensorRT engine."""
-    import torch
-    from transformers import CLIPModel, CLIPProcessor
+        input_name = self._engine.get_tensor_name(0)
+        output_name = self._engine.get_tensor_name(1)
+        input_shape = tuple(self._context.get_tensor_shape(input_name))
+        assert tuple(tensor.shape) == input_shape, (tensor.shape, input_shape)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = CLIPModel.from_pretrained(f"openai/{model_name}").vision_model.to(device)
-    model.eval()
+        stream = cuda.Stream()
+        d_input = cuda.mem_alloc(tensor.nbytes)
+        out_shape = tuple(self._context.get_tensor_shape(output_name))
+        out_dtype = trt.nptype(self._engine.get_tensor_dtype(output_name))
+        output_host = np.empty(out_shape, dtype=out_dtype)
+        d_output = cuda.mem_alloc(output_host.nbytes)
 
-    dummy = torch.randn(1, 3, 224, 224, device=device)
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
+        cuda.memcpy_htod_async(d_input, tensor, stream)
+        self._context.set_tensor_address(input_name, int(d_input))
+        self._context.set_tensor_address(output_name, int(d_output))
+        self._context.execute_async_v3(stream_handle=stream.handle)
+        cuda.memcpy_dtoh_async(output_host, d_output, stream)
+        stream.synchronize()
+        return output_host
 
-    if precision == "fp16" and device == "cuda":
-        model = model.half()
-        dummy = dummy.half()
+    def encode_image(self, image: Image.Image) -> np.ndarray:
+        if self._fallback is not None:
+            return self._fallback.encode_image(image)
+        # NOTE: production code should reuse CLIP's preprocess; simplified here.
+        import torch
+        from torchvision import transforms
+        tfm = transforms.Compose([
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=(0.48145466, 0.4578275, 0.40821073),
+                std=(0.26862954, 0.26130258, 0.27577711),
+            ),
+        ])
+        arr = tfm(image.convert("RGB")).unsqueeze(0).numpy().astype("float32")
+        out = self._infer(arr)[0]
+        out = out / np.linalg.norm(out)
+        return out.astype("float32")
 
-    traced = torch.jit.trace(model, dummy)
-    torch.jit.save(traced, str(output))
+    def encode_images(self, images: List[Image.Image]) -> np.ndarray:
+        if self._fallback is not None:
+            return self._fallback.encode_images(images)
+        return np.stack([self.encode_image(img) for img in images]) if images else np.empty(
+            (0, self._vector_size), dtype="float32"
+        )
+
+    def encode_text(self, text: str) -> np.ndarray:
+        # Text encoder is not ported to TensorRT in this build; defer to CLIP.
+        if self._fallback is None:
+            self._fallback = CLIPEncoder()
+        return self._fallback.encode_text(text)
