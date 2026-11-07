@@ -1,92 +1,50 @@
-"""End-to-end video ingestion pipeline."""
+"""Orchestrates: video → frames → Kafka → worker → Qdrant."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+import uuid
 from pathlib import Path
-from typing import List, Optional
 
-from src.streamsearch.ingestion.scene_detector import SceneDetector
-from src.streamsearch.ingestion.video_reader import Frame, VideoReader
-from src.streamsearch.models.clip_encoder import CLIPEncoder
-from src.streamsearch.storage.qdrant_store import QdrantStore
+from ..config import get_settings
+from ..logging_config import get_logger
+from .kafka_producer import FrameProducer
+from .scene_detector import SceneDetector
+from .video_reader import VideoReader
 
-
-@dataclass
-class IngestResult:
-    stream_id: str
-    video_path: str
-    scenes: int
-    vectors: int
+logger = get_logger(__name__)
 
 
 class IngestionPipeline:
-    """Read a video, detect scenes, encode frames, and store embeddings."""
-
-    def __init__(
-        self,
-        encoder: Optional[CLIPEncoder] = None,
-        store: Optional[QdrantStore] = None,
-        scene_threshold: float = 0.3,
-        min_scene_duration: float = 2.0,
-        sample_rate: float = 1.0,
-    ) -> None:
-        self.encoder = encoder or CLIPEncoder()
-        self.store = store or QdrantStore()
-        self.scene_detector = SceneDetector(
-            threshold=scene_threshold,
-            min_duration=min_scene_duration,
+    def __init__(self, producer: FrameProducer | None = None) -> None:
+        self.settings = get_settings()
+        self.producer = producer or FrameProducer()
+        self.detector = (
+            SceneDetector(threshold=self.settings.scene_threshold)
+            if self.settings.scene_detection_enabled
+            else None
         )
-        self.sample_rate = sample_rate
 
-    def ingest_video(self, video_path: str | Path, stream_id: Optional[str] = None) -> IngestResult:
+    def ingest_video(self, video_path: str | Path) -> dict:
         video_path = Path(video_path)
-        stream_id = stream_id or video_path.stem
+        if not video_path.exists():
+            raise FileNotFoundError(video_path)
 
-        with VideoReader(str(video_path), sample_rate=self.sample_rate) as reader:
-            frames = list(reader)
+        video_id = str(uuid.uuid4())
+        reader = VideoReader(video_path, interval_sec=self.settings.frame_interval_sec)
+        sent = 0
+        skipped = 0
 
-        scenes = self.scene_detector.detect(frames)
-
-        points = []
-        vector_count = 0
-        for scene in scenes:
-            mid = (scene["start"] + scene["end"]) / 2
-            image = self._frame_at(frames, mid)
-            if image is None:
+        for frame in reader:
+            if self.detector is not None and not self.detector.is_new_scene(frame):
+                skipped += 1
                 continue
-            embedding = self.encoder.encode(image)
-            point = {
-                "id": f"{stream_id}:{scene['start']:.3f}",
-                "vector": embedding.tolist(),
-                "payload": {
-                    "stream_id": stream_id,
-                    "video": str(video_path),
-                    "start": scene["start"],
-                    "end": scene["end"],
-                },
-            }
-            points.append(point)
-            vector_count += 1
+            self.producer.send_frame(
+                video_id=video_id,
+                video_path=str(video_path),
+                frame_index=frame.index,
+                timestamp_sec=frame.timestamp_sec,
+                bgr_image=frame.image,
+            )
+            sent += 1
 
-        if points:
-            self.store.upsert(points)
-
-        return IngestResult(
-            stream_id=stream_id,
-            video_path=str(video_path),
-            scenes=len(scenes),
-            vectors=vector_count,
-        )
-
-    @staticmethod
-    def _frame_at(frames: List[Frame], timestamp: float) -> Frame | None:
-        if not frames:
-            return None
-        return min(frames, key=lambda f: abs(f.timestamp - timestamp))
-
-
-def ingest_video(video_path: str | Path, stream_id: Optional[str] = None) -> IngestResult:
-    """Module-level helper to ingest a single video."""
-    pipeline = IngestionPipeline()
-    return pipeline.ingest_video(video_path, stream_id=stream_id)
+        self.producer.flush()
+        logger.info("Ingested video_id=%s sent=%d skipped=%d", video_id, sent, skipped)
+        return {"video_id": video_id, "frames_sent": sent, "frames_skipped": skipped}
