@@ -1,24 +1,20 @@
-"""Video utility helpers."""
-
-from __future__ import annotations
+"""Video helpers."""
 
 from pathlib import Path
 
 import cv2
 
 
-def extract_frame(video_path: str, timestamp: float):
-    """Extract a single frame at a given timestamp."""
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        return None
-    return frame
-
-
-def list_videos(directory: str) -> list[Path]:
-    """List video files in a directory."""
-    exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-    return sorted(p for p in Path(directory).iterdir() if p.suffix.lower() in exts)
+def video_info(path: str | Path) -> dict:
+    cap = cv2.VideoCapture(str(path))
+    try:
+        return {
+            "path": str(path),
+            "fps": float(cap.get(cv2.CAP_PROP_FPS) or 0.0),
+            "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0),
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+            "duration_sec": (cap.get(cv2.CAP_PROP_FRAME_COUNT) / (cap.get(cv2.CAP_PROP_FPS) or 1.0)),
+        }
+    finally:
+        cap.release()
