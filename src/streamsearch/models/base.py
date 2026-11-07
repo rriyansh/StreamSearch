@@ -1,28 +1,28 @@
-"""Model abstractions for encoding video frames into embeddings."""
-
-from __future__ import annotations
+"""Abstract encoder interface."""
 
 from abc import ABC, abstractmethod
 from typing import List
 
 import numpy as np
+from PIL import Image
 
 
 class BaseEncoder(ABC):
-    """Abstract base encoder for frame embeddings."""
-
-    @abstractmethod
-    def encode(self, image: np.ndarray) -> np.ndarray:
-        """Encode a single image into an embedding vector."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def encode_batch(self, images: List[np.ndarray]) -> np.ndarray:
-        """Encode a batch of images into embedding vectors."""
-        raise NotImplementedError
+    """Interface for image/text encoders producing joint embeddings."""
 
     @property
     @abstractmethod
-    def embedding_dim(self) -> int:
-        """Dimensionality of the embedding vectors."""
-        raise NotImplementedError
+    def vector_size(self) -> int:
+        """Dimensionality of the produced embeddings."""
+
+    @abstractmethod
+    def encode_image(self, image: Image.Image) -> np.ndarray:
+        """Return a normalized 1-D vector for a single image."""
+
+    @abstractmethod
+    def encode_images(self, images: List[Image.Image]) -> np.ndarray:
+        """Return an array of shape (N, vector_size) for a batch of images."""
+
+    @abstractmethod
+    def encode_text(self, text: str) -> np.ndarray:
+        """Return a normalized 1-D vector for a text query."""
