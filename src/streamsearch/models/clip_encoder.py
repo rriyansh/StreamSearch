@@ -1,44 +1,51 @@
-"""CLIP-based image encoder."""
-
-from __future__ import annotations
+"""CLIP encoder — the default, PyTorch-backed implementation."""
 
 from typing import List
 
+import clip
 import numpy as np
 import torch
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
 
-from src.streamsearch.models.base import BaseEncoder
+from ..logging_config import get_logger
+from .base import BaseEncoder
+
+logger = get_logger(__name__)
 
 
 class CLIPEncoder(BaseEncoder):
-    """Encode images using OpenAI CLIP."""
-
-    def __init__(self, model_name: str = "ViT-B/32", device: str | None = None) -> None:
-        self.model_name = model_name
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.processor = CLIPProcessor.from_pretrained(f"openai/{model_name}")
-        self.model = CLIPModel.from_pretrained(f"openai/{model_name}").to(self.device)
-        self.model.eval()
-        self._embedding_dim = self.model.vision_model.config.hidden_size
-
-    @torch.no_grad()
-    def encode(self, image: np.ndarray) -> np.ndarray:
-        pil_image = Image.fromarray(image).convert("RGB")
-        inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
-        features = self.model.get_image_features(**inputs)
-        features = features / features.norm(p=2, dim=-1, keepdim=True)
-        return features.cpu().numpy().astype(np.float32)[0]
-
-    @torch.no_grad()
-    def encode_batch(self, images: List[np.ndarray]) -> np.ndarray:
-        pil_images = [Image.fromarray(img).convert("RGB") for img in images]
-        inputs = self.processor(images=pil_images, return_tensors="pt").to(self.device)
-        features = self.model.get_image_features(**inputs)
-        features = features / features.norm(p=2, dim=-1, keepdim=True)
-        return features.cpu().numpy().astype(np.float32)
+    def __init__(self, model_name: str = "ViT-B/32", device: str = "auto") -> None:
+        self._device = "cuda" if (device == "auto" and torch.cuda.is_available()) else (
+            device if device != "auto" else "cpu"
+        )
+        logger.info("Loading CLIP model %s on %s", model_name, self._device)
+        self._model, self._preprocess = clip.load(model_name, device=self._device)
+        self._model.eval()
+        self._vector_size = self._model.visual.output_dim
 
     @property
-    def embedding_dim(self) -> int:
-        return self._embedding_dim
+    def vector_size(self) -> int:
+        return self._vector_size
+
+    @torch.no_grad()
+    def encode_image(self, image: Image.Image) -> np.ndarray:
+        tensor = self._preprocess(image.convert("RGB")).unsqueeze(0).to(self._device)
+        features = self._model.encode_image(tensor)
+        features = features / features.norm(dim=-1, keepdim=True)
+        return features.cpu().numpy().flatten().astype("float32")
+
+    @torch.no_grad()
+    def encode_images(self, images: List[Image.Image]) -> np.ndarray:
+        if not images:
+            return np.empty((0, self._vector_size), dtype="float32")
+        batch = torch.stack([self._preprocess(img.convert("RGB")) for img in images]).to(self._device)
+        features = self._model.encode_image(batch)
+        features = features / features.norm(dim=-1, keepdim=True)
+        return features.cpu().numpy().astype("float32")
+
+    @torch.no_grad()
+    def encode_text(self, text: str) -> np.ndarray:
+        tokens = clip.tokenize([text], truncate=True).to(self._device)
+        features = self._model.encode_text(tokens)
+        features = features / features.norm(dim=-1, keepdim=True)
+        return features.cpu().numpy().flatten().astype("float32")
