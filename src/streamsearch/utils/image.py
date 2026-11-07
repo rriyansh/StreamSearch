@@ -1,22 +1,13 @@
-"""Image utility helpers."""
+"""Image helpers."""
 
-from __future__ import annotations
-
+import cv2
 import numpy as np
 from PIL import Image
 
 
-def resize_image(image: np.ndarray, max_dim: int = 1024) -> np.ndarray:
-    """Resize image keeping aspect ratio."""
-    pil = Image.fromarray(image)
-    pil.thumbnail((max_dim, max_dim))
-    return np.array(pil)
+def bgr_to_pil(bgr: np.ndarray) -> Image.Image:
+    return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
 
-def to_rgb(image: np.ndarray) -> np.ndarray:
-    """Ensure image is RGB."""
-    if image.ndim == 2:
-        return np.stack([image] * 3, axis=-1)
-    if image.shape[2] == 4:
-        return image[:, :, :3]
-    return image
+def pil_to_bgr(img: Image.Image) -> np.ndarray:
+    return cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR)
