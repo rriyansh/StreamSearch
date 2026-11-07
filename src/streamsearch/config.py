@@ -1,32 +1,72 @@
-"""Application configuration loading from YAML and environment."""
+"""Configuration management using pydantic-settings."""
 
-import os
-from pathlib import Path
+from functools import lru_cache
+from typing import List, Literal
 
-import yaml
-
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "config.yaml"
-
-
-def _env_override(value):
-    if isinstance(value, str):
-        env_value = os.environ.get(value.upper())
-        if env_value is not None:
-            return env_value
-    return value
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _resolve_overrides(data):
-    if isinstance(data, dict):
-        return {k: _resolve_overrides(_env_override(v)) for k, v in data.items()}
-    if isinstance(data, list):
-        return [_resolve_overrides(_env_override(v)) for v in data]
-    return _env_override(data)
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="SS_",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # App
+    app_name: str = "StreamSearch"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    debug: bool = False
+
+    # Qdrant
+    qdrant_host: str = "localhost"
+    qdrant_port: int = 6333
+    qdrant_collection: str = "video_frames"
+    qdrant_vector_size: int = 512
+    qdrant_api_key: str | None = None
+
+    # Kafka
+    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_frames_topic: str = "video-frames"
+    kafka_consumer_group: str = "streamsearch-worker"
+
+    # CLIP
+    clip_model: str = "ViT-B/32"
+    device: Literal["auto", "cuda", "cpu"] = "auto"
+
+    # Ingestion
+    frame_interval_sec: float = 2.0
+    scene_detection_enabled: bool = True
+    scene_threshold: float = 30.0
+    batch_size: int = 32
+
+    # API
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    cors_origins: List[str] = Field(default_factory=lambda: ["*"])
+
+    # Redis cache
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    cache_ttl: int = 300
+
+    # TensorRT
+    tensorrt_enabled: bool = False
+    tensorrt_engine_path: str = "/models/clip.engine"
+
+    def resolved_device(self) -> str:
+        if self.device == "auto":
+            try:
+                import torch
+                return "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                return "cpu"
+        return self.device
 
 
-def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict:
-    """Load configuration from a YAML file with environment overrides."""
-    config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    return _resolve_overrides(data)
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
