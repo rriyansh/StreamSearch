@@ -1,26 +1,31 @@
-"""Ingest routes."""
+"""Trigger ingestion of an offline video file."""
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from pathlib import Path
 
-from src.streamsearch.api.dependencies import get_store
-from src.streamsearch.api.schemas import IngestRequest, IngestResponse
-from src.streamsearch.ingestion.pipeline import IngestionPipeline
-from src.streamsearch.storage.qdrant_store import QdrantStore
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from ...ingestion import IngestionPipeline
+from ...logging_config import get_logger
+from ..schemas import IngestRequest, IngestResponse
+
+logger = get_logger(__name__)
 router = APIRouter()
 
 
-@router.post("/ingest", response_model=IngestResponse)
-def ingest(
-    request: IngestRequest,
-    background_tasks: BackgroundTasks,
-    store: QdrantStore = Depends(get_store),
-):
-    pipeline = IngestionPipeline(store=store)
-    result = pipeline.ingest_video(request.video_path, stream_id=request.stream_id)
-    return IngestResponse(
-        stream_id=result.stream_id,
-        video_path=result.video_path,
-        scenes=result.scenes,
-        vectors=result.vectors,
-    )
+def _run_ingest(video_path: str) -> None:
+    try:
+        IngestionPipeline().ingest_video(video_path)
+    except Exception as exc:
+        logger.exception("Background ingestion failed: %s", exc)
+
+
+@router.post("/video", response_model=IngestResponse)
+def ingest_video(req: IngestRequest, background: BackgroundTasks) -> IngestResponse:
+    if not Path(req.video_path).exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {req.video_path}")
+    try:
+        result = IngestionPipeline().ingest_video(req.video_path)
+    except Exception as exc:
+        logger.exception("Ingestion failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return IngestResponse(**result)
