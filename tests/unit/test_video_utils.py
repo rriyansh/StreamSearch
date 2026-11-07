@@ -1,21 +1,11 @@
-"""Unit tests for video utilities."""
-
-from src.streamsearch.utils.video import list_videos
-from src.streamsearch.utils.image import resize_image, to_rgb
 import numpy as np
 
-
-def test_resize_image():
-    image = np.zeros((100, 200, 3), dtype=np.uint8)
-    resized = resize_image(image, max_dim=50)
-    assert max(resized.shape[:2]) <= 50
+from streamsearch.utils.image import bgr_to_pil, pil_to_bgr
 
 
-def test_to_rgb_gray():
-    gray = np.zeros((10, 10), dtype=np.uint8)
-    rgb = to_rgb(gray)
-    assert rgb.shape == (10, 10, 3)
-
-
-def test_list_videos_empty(tmp_path):
-    assert list_videos(str(tmp_path)) == []
+def test_roundtrip():
+    bgr = np.zeros((10, 10, 3), dtype=np.uint8)
+    bgr[:, :, 1] = 255  # green channel
+    pil = bgr_to_pil(bgr)
+    back = pil_to_bgr(pil)
+    assert np.array_equal(bgr, back)
