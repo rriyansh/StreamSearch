@@ -1,38 +1,38 @@
-"""Scene detection based on frame difference."""
+"""Detect scene changes so we do not embed duplicate frames."""
 
-from __future__ import annotations
-
-from typing import List
-
-import cv2
 import numpy as np
+
+from ..logging_config import get_logger
+from .video_reader import Frame
+
+logger = get_logger(__name__)
 
 
 class SceneDetector:
-    """Detect scene boundaries using absolute frame difference."""
+    """
+    Lightweight histogram-difference detector.
 
-    def __init__(self, threshold: float = 0.3, min_duration: float = 2.0) -> None:
+    A frame is considered a *new scene* if the correlation distance between
+    consecutive frames' HSV histograms exceeds ``threshold``.
+    """
+
+    def __init__(self, threshold: float = 30.0) -> None:
         self.threshold = threshold
-        self.min_duration = min_duration
+        self._last_hist: np.ndarray | None = None
 
-    def detect(self, frames) -> List[dict]:
-        """Return a list of scene segments with start/end timestamps."""
-        scenes: List[dict] = []
-        if not frames:
-            return scenes
+    def is_new_scene(self, frame: Frame) -> bool:
+        import cv2
 
-        prev_gray = None
-        scene_start = frames[0].timestamp
+        hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [32, 32], [0, 180, 0, 256])
+        cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
 
-        for frame in frames:
-            gray = cv2.cvtColor(frame.image, cv2.COLOR_RGB2GRAY)
-            if prev_gray is not None:
-                diff = cv2.absdiff(prev_gray, gray)
-                score = float(diff.mean()) / 255.0
-                if score > self.threshold and (frame.timestamp - scene_start) >= self.min_duration:
-                    scenes.append({"start": scene_start, "end": frame.timestamp, "score": score})
-                    scene_start = frame.timestamp
-            prev_gray = gray
+        if self._last_hist is None:
+            self._last_hist = hist
+            return True
 
-        scenes.append({"start": scene_start, "end": frames[-1].timestamp, "score": 0.0})
-        return scenes
+        diff = float(cv2.compareHist(self._last_hist, hist, cv2.HISTCMP_CORREL))
+        self._last_hist = hist
+        # HISTCMP_CORREL ∈ [-1, 1]; 1 = identical. Convert to a distance-like score.
+        distance = (1.0 - diff) * 100.0
+        return distance > self.threshold
