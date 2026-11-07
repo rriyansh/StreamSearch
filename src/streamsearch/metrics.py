@@ -1,12 +1,37 @@
-"""Prometheus metrics for the StreamSearch API."""
+"""Prometheus metrics."""
 
 from prometheus_client import Counter, Histogram, Gauge
 
-INGEST_REQUESTS = Counter("streamsearch_ingest_requests_total", "Total ingest requests", ["status"])
-SEARCH_REQUESTS = Counter("streamsearch_search_requests_total", "Total search requests", ["status"])
-EMBEDDING_ENCODE_DURATION = Histogram(
-    "streamsearch_embedding_encode_seconds",
-    "Time spent encoding embeddings",
+# Ingestion
+FRAMES_PROCESSED = Counter(
+    "streamsearch_frames_processed_total",
+    "Total frames processed",
+    ["status"],
 )
-ACTIVE_STREAMS = Gauge("streamsearch_active_streams", "Number of active video streams")
-VECTOR_COUNT = Gauge("streamsearch_vector_count", "Number of vectors in Qdrant", ["collection"])
+INGESTION_LATENCY = Histogram(
+    "streamsearch_ingestion_latency_seconds",
+    "Per-frame ingestion latency",
+)
+
+# Search
+SEARCH_REQUESTS = Counter(
+    "streamsearch_search_requests_total",
+    "Total search requests",
+)
+SEARCH_LATENCY = Histogram(
+    "streamsearch_search_latency_seconds",
+    "Search request latency",
+)
+
+# Vector store
+VECTOR_COUNT = Gauge(
+    "streamsearch_vector_count",
+    "Number of vectors in the collection",
+)
+
+# Kafka
+KAFKA_MESSAGES = Counter(
+    "streamsearch_kafka_messages_total",
+    "Kafka messages processed",
+    ["topic", "status"],
+)
