@@ -1,10 +1,9 @@
-"""Pytest configuration and shared fixtures."""
+import os
+import sys
+from pathlib import Path
 
-import pytest
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from src.streamsearch.models.clip_encoder import CLIPEncoder
-
-
-@pytest.fixture
-def encoder():
-    return CLIPEncoder(model_name="ViT-B/32", device="cpu")
+os.environ.setdefault("SS_QDRANT_HOST", "localhost")
+os.environ.setdefault("SS_REDIS_HOST", "localhost")
+os.environ.setdefault("SS_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
