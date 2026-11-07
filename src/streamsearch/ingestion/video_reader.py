@@ -1,58 +1,46 @@
-"""Video reading utilities using OpenCV."""
-
-from __future__ import annotations
+"""Frame iteration from a video file or stream."""
 
 from dataclasses import dataclass
-from typing import Iterator, List
+from pathlib import Path
+from typing import Iterator
 
 import cv2
 import numpy as np
 
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class Frame:
-    timestamp: float
     index: int
-    image: np.ndarray
+    timestamp_sec: float
+    image: np.ndarray  # BGR, as returned by OpenCV
 
 
 class VideoReader:
-    """Read frames from a video file."""
+    """Iterate frames of a video at a configurable interval."""
 
-    def __init__(self, path: str, sample_rate: float = 1.0) -> None:
-        self.path = path
-        self.sample_rate = sample_rate
-        self.cap = cv2.VideoCapture(path)
-        if not self.cap.isOpened():
-            raise ValueError(f"Cannot open video: {path}")
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
-        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.duration = self.frame_count / self.fps if self.fps else 0.0
+    def __init__(self, source: str | Path, interval_sec: float = 2.0) -> None:
+        self.source = str(source)
+        self.interval_sec = interval_sec
 
     def __iter__(self) -> Iterator[Frame]:
-        index = 0
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                break
-            if index % max(1, int(round(1.0 / self.sample_rate))) == 0:
-                timestamp = index / self.fps if self.fps else 0.0
-                yield Frame(timestamp=timestamp, index=index, image=frame)
-            index += 1
-        self.cap.release()
+        cap = cv2.VideoCapture(self.source)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video source: {self.source}")
 
-    def __enter__(self) -> "VideoReader":
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.cap.release()
-
-    def sample_frames(self, timestamps: List[float]) -> List[Frame]:
-        """Read specific frames at given timestamps."""
-        frames: List[Frame] = []
-        for timestamp in timestamps:
-            self.cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-            ret, image = self.cap.read()
-            if ret:
-                frames.append(Frame(timestamp=timestamp, index=len(frames), image=image))
-        return frames
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            skip = max(1, int(round(fps * self.interval_sec)))
+            idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if idx % skip == 0:
+                    yield Frame(index=idx, timestamp_sec=idx / fps, image=frame)
+                idx += 1
+        finally:
+            cap.release()
