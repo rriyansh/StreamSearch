@@ -1,175 +1,238 @@
-## StreamSearch: Real-Time Multimodal Video Search.
 
-StreamSearch is a high-throughput video analytics engine designed to perform real-time, natural-language semantic searches across live video streams. By heavily optimizing vision-language models with hardware acceleration and combining them with specialized vector databases, StreamSearch achieves sub-50ms query latency while ingesting video at a sustained 30 FPS.
+<div align="center">
 
-### Key Features.
 
-Zero-Shot Multimodal Search: Search live video using natural language without pre-tagging or bounding boxes.
+  # StreamSearch
 
-Ultra-Low Latency: End-to-end query retrieval in under 50 milliseconds.
+  ### Real-Time Multimodal Video Search Engine with Sub-50ms Latency
 
-High-Throughput Ingestion: Sustained 30 Frames Per Second (FPS) processing per camera stream, buffered safely via event streaming.
+  [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+  [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+  [![CUDA](https://img.shields.io/badge/CUDA-12.1%2B-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
+  [![TensorRT](https://img.shields.io/badge/NVIDIA-TensorRT-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/tensorrt)
+  [![Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?style=flat-square&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
+  [![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-DC2626?style=flat-square)](https://qdrant.tech/)
 
-Hardware Accelerated: Utilizes NVIDIA TensorRT for optimized FP16/INT8 inference, drastically reducing the compute footprint of heavy vision models.
+  <p align="center">
+    <a href="#key-features">Features</a> •
+    <a href="#system-architecture">Architecture</a> •
+    <a href="#tech-stack">Tech Stack</a> •
+    <a href="#prerequisites">Prerequisites</a> •
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#performance-benchmarks">Benchmarks</a>
+  </p>
 
-Scalable Vector Retrieval: Leverages Qdrant Approximate Nearest Neighbor (ANN) indexing for instantaneous semantic matching.
+</div>
 
-## System Architecture.
+---
 
-The pipeline is decoupled into microservices to ensure stability under heavy loads:
+<div align="center">
 
-Live Video Stream (RTSP/WebRTC): Raw video frames are captured from target sources.
+### System Performance At A Glance
 
-Apache Kafka (Ingestion Queue): Acts as a shock absorber. Frames are serialized and pushed to Kafka topics, decoupling ingestion from inference and preventing frame drops during traffic spikes.
+| Ingestion Rate | Inference Time | Vector Search | End-to-End Latency |
+| :---: | :---: | :---: | :---: |
+| **30 FPS** / stream | **~12 ms** / frame | **< 5 ms** / batch | **< 50 ms** total |
 
-CLIP Model (Vision-Language): Frames are consumed and processed by the CLIP model to generate high-dimensional vector embeddings of the visual scene.
+</div>
 
-TensorRT & CUDA (Acceleration): The CLIP vision encoder is compiled with TensorRT, maximizing GPU utilization through layer fusion and precision calibration for real-time throughput.
+---
 
-Qdrant (ANN Index): Embeddings are streamed directly into Qdrant for rapid similarity indexing.
+## Executive Summary
 
-Instant Timestamp Result: User text queries are embedded and compared against the Qdrant index using cosine similarity, returning the exact timestamp of the matching frame.
+**StreamSearch** is a high-throughput, hardware-accelerated video analytics engine designed for real-time natural language semantic queries across live video streams. By compiling vision-language models with NVIDIA TensorRT and indexing frame embeddings into Qdrant ANN vector database, StreamSearch enables sub-50ms query responses over sustained 30 FPS video feeds without manual tagging or pre-processing.
 
-### Tech Stack.
+---
 
-Message Broker: Apache Kafka
+## Key Features
 
-AI/ML Model: OpenAI CLIP (ViT-B/32 or ViT-L/14)
+- **Zero-Shot Semantic Search**: Query live video feeds using natural language strings directly without bounding box annotations or manual pre-tagging.
+- **Sub-50ms Query Retrieval**: Delivers end-to-end query results from raw prompt to matched video timestamp in under 50 milliseconds.
+- **High-Throughput Ingestion**: Sustains processing speeds of 30 Frames Per Second (FPS) per camera feed using stream buffering.
+- **TensorRT Hardware Acceleration**: Utilizes NVIDIA TensorRT for FP16/INT8 precision calibration and layer fusion to optimize CLIP model inference.
+- **Scalable Vector Retrieval**: Employs Qdrant Approximate Nearest Neighbor (ANN) indexing for high-speed high-dimensional cosine similarity matching.
 
-Hardware Acceleration: NVIDIA CUDA toolkit, TensorRT
+---
 
-Vector Database: Qdrant
+## System Architecture
 
-Backend / API: Python, FastAPI
 
-Deployment: Docker, Docker Compose
+```
 
-## Prerequisites.
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                           StreamSearch Pipeline                               │
+│                                                                               │
+│  ┌──────────────┐     ┌──────────────┐     ┌───────────────┐     ┌─────────┐  │
+│  │ Live Video   │───▶ │ Apache Kafka │───▶ │ CLIP Engine   │───▶ │ Qdrant  │  │
+│  │ (RTSP/WebRTC)│     │  (Buffer)    │     │ (TensorRT/GPU)│     │ (ANN)   │  │
+│  └──────────────┘     └──────────────┘     └───────────────┘     └────┬────┘  │
+│                                                                       │       │
+│                                                                       ▼       │
+│  ┌──────────────┐     ┌──────────────┐                     ┌──────────┴────┐  │
+│  │ User Text    │───▶ │ Text Encoder │───────────────────▶ │ Cosine Search │  │
+│  │ Query (API)  │     │  (FastAPI)   │                     │ Matched Frame │  │
+│  └──────────────┘     └──────────────┘                     └───────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────┘
 
-To run StreamSearch, your environment must meet the following requirements:
+```
 
-OS: Linux (Ubuntu 22.04 recommended)
+### Data Pipeline Workflow
 
-GPU: NVIDIA GPU with at least 8GB VRAM (e.g., RTX 3080, A10G, T4)
+1. **Ingestion**: RTSP/WebRTC streams are pushed to Apache Kafka topics to act as a shock absorber against traffic spikes.
+2. **Inference**: Workers consume frames from Kafka and execute TensorRT-accelerated CLIP vision encoding to compute spatial embeddings.
+3. **Indexing**: Embeddings are streamed to Qdrant vector database via batched gRPC.
+4. **Retrieval**: User search prompts submitted via FastAPI are converted to text embeddings, matched against Qdrant ANN index, and returned with exact frame timestamps.
 
-Drivers: NVIDIA Driver >= 530.xx, CUDA Toolkit 12.1+
+---
 
-Software: Docker, Docker Compose, Python 3.10+
+## Tech Stack
 
-### Installation and Setup.
+| Component | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Message Broker** | Apache Kafka | Frame ingestion queuing & stream shock-absorption |
+| **Vision Model** | OpenAI CLIP (ViT-B/32 / ViT-L/14) | Multimodal visual-textual embedding generation |
+| **Acceleration** | NVIDIA CUDA Toolkit 12.1 + TensorRT | Model layer fusion & FP16/INT8 execution |
+| **Vector Index** | Qdrant | Approximate Nearest Neighbor (ANN) vector search |
+| **API Server** | Python 3.10+ / FastAPI | REST endpoint for query execution |
+| **Deployment** | Docker / Docker Compose | Microservices containerization |
 
-1. Clone the repository
+---
 
-git clone https://github.com/your-org/StreamSearch.git
+## Prerequisites
+
+- **Operating System**: Linux (Ubuntu 22.04 LTS recommended)
+- **GPU Hardware**: NVIDIA GPU with >= 8GB VRAM (e.g., RTX 3080, A10G, T4, RTX 4090)
+- **NVIDIA Drivers**: Version >= 530.xx
+- **CUDA Toolkit**: 12.1+
+- **Container Environment**: Docker & Docker Compose
+- **Runtime Environment**: Python 3.10+
+
+---
+
+## Quick Start
+
+### 1. Repository Setup
+
+```bash
+git clone [https://github.com/your-org/StreamSearch.git](https://github.com/your-org/StreamSearch.git)
 cd StreamSearch
 
+```
 
-2. Configure Environment Variables
+### 2. Environment Configuration
 
-Copy the template and adjust your settings for RTSP stream URLs and GPU allocations.
-
+```bash
 cp .env.example .env
 
+```
 
-3. Build the TensorRT Engine
+*Note: Update `.env` to specify RTSP stream source URLs, CUDA device IDs, and target frame dimensions.*
 
-Before starting the pipeline, compile the CLIP model weights to a TensorRT engine optimized for your specific GPU architecture.
+### 3. Build TensorRT Engine
 
+Compile the vision model weights to an optimized TensorRT engine targeting your local GPU architecture:
+
+```bash
 python scripts/build_trt_engine.py --model ViT-B/32 --precision fp16
 
+```
 
-4. Start the Infrastructure
+### 4. Infrastructure Provisioning
 
-Launch Kafka and Qdrant using Docker Compose.
+Start Kafka, Zookeeper, and Qdrant services:
 
+```bash
 docker-compose up -d zookeeper kafka qdrant
 
+```
 
-5. Launch the StreamSearch Pipeline
+### 5. Launch Application Engine
 
-Start the worker nodes and API server.
+Deploy worker nodes and API endpoints:
 
+```bash
 docker-compose up --build ingestion-worker inference-worker api-server
 
+```
 
-### Usage.
+---
 
-Once the pipeline is running, the API will be available at http://localhost:8000.
+## API Usage Reference
 
-Submitting a Search Query
+Once deployed, the REST API is accessible at `http://localhost:8000`.
 
-You can query the live stream using a simple REST API call.
+### Execute Vector Search
 
-Request:
+**Endpoint**: `POST /api/v1/search`
 
+#### Request
+
+```bash
 curl -X POST "http://localhost:8000/api/v1/search" \
      -H "Content-Type: application/json" \
-     -d '{"query": "a person riding a bicycle", "time_window": "last_10_mins", "limit": 3}'
+     -d '{
+           "query": "a person riding a bicycle",
+           "time_window": "last_10_mins",
+           "limit": 3
+         }'
 
+```
 
-Response:
+#### Response
 
+```json
 {
   "query": "a person riding a bicycle",
   "latency_ms": 38,
   "results": [
     {
-      "timestamp": "2023-10-27T14:32:01.450Z",
+      "timestamp": "2026-11-10T14:32:01.450Z",
       "stream_id": "camera_front_gate",
       "confidence_score": 0.89
     }
   ]
 }
 
+```
 
-### Performance Benchmarks.
+---
 
-Tested on an NVIDIA RTX 4090, Intel i9-13900K, Ubuntu 22.04
+## Performance Benchmarks
 
-Metric
+*Hardware Context: NVIDIA RTX 4090 | Intel Core i9-13900K | Ubuntu 22.04 LTS*
 
-Measurement
+| Metric | Measured Value | Execution Detail |
+| --- | --- | --- |
+| **Stream Ingestion** | 30 FPS | Sustained rate via Kafka zero-loss buffering |
+| **Model Inference** | ~12 ms / frame | CLIP Vision Encoder (FP16 TensorRT) |
+| **Vector Indexing** | < 5 ms | Qdrant batched gRPC insertion |
+| **Total Query Latency** | < 50 ms | Text embedding + ANN search + JSON payload |
 
-Notes
+---
 
-Ingestion Rate
+## Product Roadmap
 
-30 FPS
+* [ ] Distributed multi-camera orchestration via Kubernetes.
+* [ ] Integration of alternative vision-language backends (BLIP-2, SigLIP).
+* [ ] Interactive Web UI with real-time visual bounding-box highlights.
+* [ ] INT8 quantization pipeline targeting Jetson Orin edge devices.
 
-Zero frame drops via Kafka buffering
+---
 
-Inference Time (CLIP + TRT)
+## Contributing
 
-~12ms / frame
+Contributions are welcome. Please consult `CONTRIBUTING.md` for code style standards, development setup steps, and the pull request submission process.
 
-FP16 precision
+---
 
-Vector Indexing (Qdrant)
+## License
 
-< 5ms
+Distributed under the **MIT License**. See `LICENSE` for details.
 
-Batched gRPC inserts
+---
 
-End-to-End Query Latency
+<sub>Built for real-time multimodal intelligence</sub>
 
-< 50ms
+```
 
-Text embedding + ANN Search + JSON return
-
-### Roadmap.
-
-[ ] Multi-camera distributed scaling via Kubernetes.
-
-[ ] Support for open-source alternatives to CLIP (e.g., BLIP-2, SigLIP).
-
-[ ] Web-based user interface with live bounding-box highlighting.
-
-[ ] INT8 quantization for edge-device deployment (Jetson Orin).
-
-### Contributing.
-
-We welcome contributions. Please read the contributing guidelines for details on our code of conduct and the process for submitting pull requests.
-
-### License.
-
-This project is licensed under the MIT License. See the license file for details.
+```
